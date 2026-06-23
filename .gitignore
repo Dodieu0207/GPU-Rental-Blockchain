@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.secret
+secrets/
+
+# Hardhat
+artifacts/
+cache/
+.hardhat-local/
+
+# Next.js / frontend
+.next/
+out/
+dist/
+build/
+
+# Local package/cache folders
+.npm-cache/
+
+# Runtime/demo data
+.decompute/
+backend/data/*.json
+!backend/data/.gitkeep
+
+# Logs
+*.log
+dev-server.log
+dev-server.err.log
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
