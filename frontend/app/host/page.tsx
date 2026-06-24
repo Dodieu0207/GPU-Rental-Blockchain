@@ -18,7 +18,7 @@ export default function HostPage() {
   const [cid, setCid] = useState("");
   const [spec, setSpec] = useState("");
   const [pricePerHourWei, setPricePerHourWei] = useState("1000000000000000");
-  const [agentUrl, setAgentUrl] = useState("http://localhost:5055");
+  const [agentUrl, setAgentUrl] = useState("http://localhost:7000");
   const [providerBalance, setProviderBalance] = useState("0");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isWithdrawing, setIsWithdrawing] = useState(false);
@@ -143,6 +143,26 @@ export default function HostPage() {
     }
   };
 
+  if (!isProviderRole) {
+    return (
+      <section className="space-y-6">
+        <div>
+          <p className="text-sm font-semibold uppercase tracking-wide text-brand">
+            Host Dashboard
+          </p>
+          <h1 className="mt-2 text-3xl font-bold text-ink">Access Denied</h1>
+          <p className="mt-2 max-w-2xl text-gray-600">
+            Agent Setup is only for GPU Owners. Tenant/Renter accounts do not need
+            to download or run the Agent.
+          </p>
+        </div>
+        <StatusMessage type="warning">
+          Switch your role to Provider in the top navigation if you are listing a GPU.
+        </StatusMessage>
+      </section>
+    );
+  }
+
   return (
     <section className="space-y-6">
       <div>
@@ -171,6 +191,60 @@ export default function HostPage() {
       </div>
 
       {message ? <StatusMessage type={message.type}>{message.text}</StatusMessage> : null}
+
+      <section className="rounded-lg border border-line bg-white p-5 shadow-soft">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <h2 className="text-xl font-bold text-ink">Agent Setup</h2>
+            <p className="mt-2 max-w-3xl text-sm text-gray-600">
+              Agent is required for GPU Owners. It scans your GPU, generates an IPFS
+              CID, and manages rental containers on your machine.
+            </p>
+          </div>
+          <a
+            href="/gpu-agent.js"
+            download
+            className="inline-flex rounded-md bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+          >
+            Download Agent
+          </a>
+        </div>
+
+        <div className="mt-5 grid gap-4 lg:grid-cols-2">
+          <div>
+            <h3 className="font-semibold text-ink">Host checklist</h3>
+            <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm text-gray-700">
+              <li>Step 1: Download Agent</li>
+              <li>Step 2: Run GPU Scan</li>
+              <li>Step 3: Copy CID</li>
+              <li>Step 4: Register GPU</li>
+              <li>Step 5: Start Agent Server</li>
+            </ol>
+          </div>
+
+          <div className="space-y-4 text-sm text-gray-700">
+            <div>
+              <p className="font-semibold text-ink">Create metadata CID</p>
+              <pre className="mt-2 overflow-x-auto rounded-md bg-gray-950 p-3 text-gray-50">
+                <code>node gpu-agent.js upload</code>
+              </pre>
+              <p className="mt-2">
+                Copy the generated CID and paste it into the Register GPU form.
+              </p>
+            </div>
+            <div>
+              <p className="font-semibold text-ink">Run Agent server for rentals</p>
+              <pre className="mt-2 overflow-x-auto rounded-md bg-gray-950 p-3 text-gray-50">
+                <code>node gpu-agent.js serve</code>
+              </pre>
+              <p className="mt-2">
+                Default Agent URL: <span className="font-semibold">http://localhost:7000</span>.
+                Keep this process running while your GPU is listed as available.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
 
       <section className="rounded-lg border border-line bg-white p-5 shadow-soft">
         <h2 className="text-xl font-bold text-ink">My Earnings</h2>

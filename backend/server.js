@@ -15,7 +15,7 @@ const CONFIG = {
   contractRpcUrl: process.env.CONTRACT_RPC_URL || '',
   contractPrivateKey: process.env.CONTRACT_PRIVATE_KEY || '',
   minStakeWei: process.env.MIN_STAKE_WEI || '50000000000000000',
-  defaultAgentUrl: process.env.DEFAULT_AGENT_URL || 'http://localhost:5055',
+  defaultAgentUrl: process.env.DEFAULT_AGENT_URL || 'http://localhost:7000',
 };
 
 const DATA_FILE = path.join(CONFIG.dataDir, 'decompute-db.json');
@@ -75,6 +75,18 @@ function sendJson(response, statusCode, body) {
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   });
   response.end(JSON.stringify(body, null, 2));
+}
+
+async function sendAgentDownload(response) {
+  const agentPath = path.join(__dirname, '..', 'gpu-agent.js');
+  const agentSource = await fs.readFile(agentPath, 'utf8');
+
+  response.writeHead(200, {
+    'Content-Type': 'application/javascript',
+    'Content-Disposition': 'attachment; filename="gpu-agent.js"',
+    'Access-Control-Allow-Origin': '*',
+  });
+  response.end(agentSource);
 }
 
 function getUser(request) {
@@ -399,6 +411,10 @@ async function handleRequest(request, response) {
 
     if (request.method === 'GET' && url.pathname === '/api/health') {
       return sendJson(response, 200, { ok: true, service: 'decompute-backend' });
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/agent/download') {
+      return sendAgentDownload(response);
     }
 
     if (request.method === 'POST' && url.pathname === '/api/users/connect-wallet') {
