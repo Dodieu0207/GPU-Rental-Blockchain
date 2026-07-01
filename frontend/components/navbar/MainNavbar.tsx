@@ -3,45 +3,56 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ConnectWalletButton } from "@/components/wallet/ConnectWalletButton";
-import { useWallet, type UserRole } from "@/components/WalletProvider";
+import { useWallet } from "@/components/WalletProvider";
 
-const navItems = [
-  { href: "/", label: "Landing" },
-  { href: "/auth", label: "Auth" },
+const guestItems = [
+  { href: "/", label: "Home" },
+  { href: "/marketplace", label: "Browse GPUs" },
+  { href: "/guides", label: "Guide" },
+];
+
+const tenantItems = [
+  { href: "/", label: "Home" },
   { href: "/marketplace", label: "Browse GPUs" },
   { href: "/rentals", label: "Active Rentals" },
+  { href: "/transactions", label: "Transaction" },
+  { href: "/guides", label: "Guide" },
+  { href: "/settings", label: "Settings" },
+];
+
+const hostItems = [
+  { href: "/", label: "Home" },
+  { href: "/marketplace", label: "Browse GPUs" },
   { href: "/host", label: "Host" },
-  { href: "/transactions", label: "Transactions" },
-  { href: "/payments", label: "Payment" },
+  { href: "/rentals", label: "Active Rentals" },
+  { href: "/transactions", label: "Transaction" },
   { href: "/guides", label: "Guide" },
   { href: "/settings", label: "Settings" },
 ];
 
 export function MainNavbar() {
-  const pathname = usePathname();
-  const { isConnected, isSepolia, role, setRole, switchToSepolia } = useWallet();
+  const pathname = usePathname() ?? "/";
+  const { isConnected, role } = useWallet();
+  const navItems = !isConnected ? guestItems : role === "host" ? hostItems : tenantItems;
 
   return (
-    <header className="border-b border-line bg-white">
-      <div className="mx-auto flex max-w-6xl flex-col gap-4 px-4 py-4">
+    <header className="border-b border-white/10 bg-[#1b1252] shadow-[0_8px_30px_rgba(7,3,35,0.28)]">
+      <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <Link href="/" className="text-xl font-bold text-ink">
-            DeCompute
+          <Link href="/" className="flex items-center gap-3 text-2xl font-bold text-white">
+            <span className="grid h-10 w-10 place-items-center text-4xl leading-none">✶</span>
+            <span>DeCompute</span>
           </Link>
           <div className="flex flex-wrap items-center gap-3">
-            <select
-              value={role}
-              onChange={(event) => setRole(event.target.value as UserRole)}
-              className="rounded-md border border-line bg-white px-3 py-2 text-sm font-semibold text-ink"
-            >
-              <option value="renter">Renter</option>
-              <option value="provider">Provider</option>
-              <option value="admin">Platform owner</option>
-            </select>
+            {isConnected ? (
+              <span className="rounded-md border border-white/30 bg-[#1b1252] px-3 py-2 text-sm font-semibold capitalize text-white">
+                {role}
+              </span>
+            ) : null}
             <ConnectWalletButton />
           </div>
         </div>
-        <nav className="flex gap-1 overflow-x-auto text-sm">
+        <nav className="flex gap-2 overflow-x-auto text-base">
           {navItems.map((item) => {
             const active =
               item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
@@ -49,10 +60,10 @@ export function MainNavbar() {
               <Link
                 key={item.href}
                 href={item.href}
-                className={`whitespace-nowrap rounded-md px-3 py-2 font-medium ${
+                className={`whitespace-nowrap rounded-md px-4 py-2 font-semibold ${
                   active
-                    ? "bg-blue-50 text-brand"
-                    : "text-gray-600 hover:bg-gray-100 hover:text-ink"
+                    ? "bg-violet-600 text-white ring-1 ring-violet-400"
+                    : "text-white hover:bg-white/10"
                 }`}
               >
                 {item.label}
@@ -61,15 +72,6 @@ export function MainNavbar() {
           })}
         </nav>
       </div>
-      {isConnected && !isSepolia ? (
-        <div className="border-t border-amber-200 bg-amber-50 px-4 py-2 text-center text-sm font-medium text-amber-800">
-          Wrong network.{" "}
-          <button type="button" onClick={switchToSepolia} className="font-bold underline">
-            Switch MetaMask to Sepolia
-          </button>
-          {" "}before blockchain actions.
-        </div>
-      ) : null}
     </header>
   );
 }

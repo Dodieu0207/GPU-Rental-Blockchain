@@ -1,5 +1,10 @@
 {
+  "scripts": {
+    "test": "node --test",
+    "build": "hardhat compile"
+  },
   "devDependencies": {
+    "@nomicfoundation/hardhat-ethers": "^4.0.13",
     "hardhat": "^3.9.0"
   },
   "dependencies": {

@@ -9,8 +9,8 @@ import {
   useState,
 } from "react";
 import { BrowserProvider } from "ethers";
-
-export type UserRole = "renter" | "provider" | "admin";
+import { signInProfile, signUpProfile } from "@/lib/api";
+import type { UserRole } from "@/lib/types";
 
 type WalletContextValue = {
   account: string | null;
@@ -19,17 +19,16 @@ type WalletContextValue = {
   role: UserRole;
   isConnecting: boolean;
   isConnected: boolean;
-  isSepolia: boolean;
   connectWallet: () => Promise<void>;
-  switchToSepolia: () => Promise<void>;
-  setRole: (role: UserRole) => void;
+  signUpWithWallet: (role: UserRole) => Promise<void>;
+  disconnectWallet: () => void;
+  clearCache: () => void;
   getProvider: () => BrowserProvider | null;
 };
 
-const SEPOLIA_CHAIN_ID = 11155111;
-const SEPOLIA_CHAIN_HEX = "0xaa36a7";
-const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:5000";
 const WalletContext = createContext<WalletContextValue | null>(null);
+const WALLET_STORAGE_KEY = "decompute.walletAddress";
+const ROLE_STORAGE_KEY = "decompute.role";
 
 declare global {
   interface Window {
@@ -45,7 +44,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [account, setAccount] = useState<string | null>(null);
   const [chainId, setChainId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [role, setRoleState] = useState<UserRole>("renter");
+  const [role, setRoleState] = useState<UserRole>("tenant");
   const [isConnecting, setIsConnecting] = useState(false);
 
   const getProvider = useCallback(() => {
@@ -67,46 +66,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setChainId(Number(network.chainId));
   }, [getProvider]);
 
-  const linkWalletToBackend = useCallback(
-    async (walletAddress: string, nextRole: UserRole) => {
-      try {
-        await fetch(`${backendUrl}/api/users/connect-wallet`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            walletAddress,
-            role: nextRole,
-            userId: walletAddress,
-          }),
-        });
-      } catch {
-        // Demo backend can be offline; never block MetaMask connection on this.
-      }
-    },
-    [],
-  );
-
-  const switchToSepolia = useCallback(async () => {
-    setError(null);
-
-    if (typeof window === "undefined" || !window.ethereum) {
-      setError("MetaMask is not installed. Please install MetaMask to continue.");
-      return;
-    }
-
-    try {
-      await window.ethereum.request({
-        method: "wallet_switchEthereumChain",
-        params: [{ chainId: SEPOLIA_CHAIN_HEX }],
-      });
-      setChainId(SEPOLIA_CHAIN_ID);
-    } catch (switchError) {
-      setError(
-        switchError instanceof Error
-          ? switchError.message
-          : "Please switch MetaMask to Sepolia.",
-      );
-    }
+  const applyBackendUser = useCallback((user: { walletAddress: string; role: "provider" | "renter" }) => {
+    const nextRole = user.role === "provider" ? "host" : "tenant";
+    setAccount(user.walletAddress);
+    setRoleState(nextRole);
+    window.localStorage.setItem(WALLET_STORAGE_KEY, user.walletAddress);
+    window.localStorage.setItem(ROLE_STORAGE_KEY, nextRole);
   }, []);
 
   const connectWallet = useCallback(async () => {
@@ -123,11 +88,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         method: "eth_requestAccounts",
       })) as string[];
       const nextAccount = accounts[0] ?? null;
-      setAccount(nextAccount);
 
       if (nextAccount) {
-        window.localStorage.setItem("decompute.walletAddress", nextAccount);
-        await linkWalletToBackend(nextAccount, role);
+        const user = await signInProfile(nextAccount);
+        applyBackendUser(user);
       }
 
       await loadChainId();
@@ -140,35 +104,80 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setIsConnecting(false);
     }
-  }, [linkWalletToBackend, loadChainId, role]);
+  }, [applyBackendUser, loadChainId]);
 
-  const setRole = useCallback(
-    (nextRole: UserRole) => {
-      setRoleState(nextRole);
+  const signUpWithWallet = useCallback(async (nextRole: UserRole) => {
+    setError(null);
+    if (typeof window === "undefined" || !window.ethereum) {
+      setError("MetaMask is not installed. Please install MetaMask to continue.");
+      return;
+    }
 
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem("decompute.role", nextRole);
-      }
+    setIsConnecting(true);
+    try {
+      const accounts = (await window.ethereum.request({ method: "eth_requestAccounts" })) as string[];
+      const nextAccount = accounts[0] ?? null;
+      if (!nextAccount) throw new Error("No wallet account selected.");
+      const user = await signUpProfile(nextAccount, nextRole);
+      applyBackendUser(user);
+      await loadChainId();
+    } catch (signupError) {
+      setError(signupError instanceof Error ? signupError.message : "Could not sign up wallet.");
+    } finally {
+      setIsConnecting(false);
+    }
+  }, [applyBackendUser, loadChainId]);
 
-      if (account) {
-        void linkWalletToBackend(account, nextRole);
-      }
-    },
-    [account, linkWalletToBackend],
-  );
+  const disconnectWallet = useCallback(() => {
+    setAccount(null);
+    setChainId(null);
+    setError(null);
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(WALLET_STORAGE_KEY);
+    }
+  }, []);
+
+  const clearCache = useCallback(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.removeItem(WALLET_STORAGE_KEY);
+    window.localStorage.removeItem(ROLE_STORAGE_KEY);
+    setAccount(null);
+    setChainId(null);
+    setError(null);
+    setRoleState("tenant");
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    const savedRole = window.localStorage.getItem("decompute.role") as UserRole | null;
-    const savedWallet = window.localStorage.getItem("decompute.walletAddress");
+    const savedRole = window.localStorage.getItem(ROLE_STORAGE_KEY) as UserRole | null;
 
-    if (savedRole && ["renter", "provider", "admin"].includes(savedRole)) {
+    if (savedRole && ["tenant", "host"].includes(savedRole)) {
       setRoleState(savedRole);
     }
 
-    if (savedWallet) {
-      setAccount(savedWallet);
+    if (window.ethereum) {
+      window.ethereum.request({ method: "eth_accounts" })
+        .then((accounts) => {
+          const nextAccount = ((accounts as string[]) ?? [])[0] ?? null;
+          setAccount(nextAccount);
+          if (nextAccount) {
+            signInProfile(nextAccount)
+              .then(applyBackendUser)
+              .catch(() => {
+                setAccount(null);
+                window.localStorage.removeItem(WALLET_STORAGE_KEY);
+                window.localStorage.removeItem(ROLE_STORAGE_KEY);
+              });
+          } else {
+            window.localStorage.removeItem(WALLET_STORAGE_KEY);
+            window.localStorage.removeItem(ROLE_STORAGE_KEY);
+          }
+        })
+        .catch(() => {
+          setAccount(null);
+          window.localStorage.removeItem(WALLET_STORAGE_KEY);
+        });
     }
   }, []);
 
@@ -183,10 +192,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       setAccount(nextAccount);
 
       if (nextAccount) {
-        window.localStorage.setItem("decompute.walletAddress", nextAccount);
-        void linkWalletToBackend(nextAccount, role);
+        window.localStorage.setItem(WALLET_STORAGE_KEY, nextAccount);
+        void signInProfile(nextAccount).then(applyBackendUser).catch(() => {
+          setAccount(null);
+          window.localStorage.removeItem(WALLET_STORAGE_KEY);
+          window.localStorage.removeItem(ROLE_STORAGE_KEY);
+        });
       } else {
-        window.localStorage.removeItem("decompute.walletAddress");
+        window.localStorage.removeItem(WALLET_STORAGE_KEY);
       }
     };
 
@@ -203,7 +216,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       window.ethereum?.removeListener?.("accountsChanged", handleAccountsChanged);
       window.ethereum?.removeListener?.("chainChanged", handleChainChanged);
     };
-  }, [linkWalletToBackend, loadChainId, role]);
+  }, [applyBackendUser, loadChainId]);
 
   const value = useMemo<WalletContextValue>(
     () => ({
@@ -213,22 +226,23 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       role,
       isConnecting,
       isConnected: Boolean(account),
-      isSepolia: chainId === SEPOLIA_CHAIN_ID,
       connectWallet,
-      switchToSepolia,
-      setRole,
+      signUpWithWallet,
+      disconnectWallet,
+      clearCache,
       getProvider,
     }),
     [
       account,
       chainId,
       connectWallet,
+      signUpWithWallet,
+      clearCache,
+      disconnectWallet,
       error,
       getProvider,
       isConnecting,
       role,
-      setRole,
-      switchToSepolia,
     ],
   );
 

@@ -1,6 +1,34 @@
 export const contractABI = [
   {
     inputs: [],
+    name: "nextAgreementId",
+    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [{ internalType: "uint256", name: "_agreementId", type: "uint256" }],
+    name: "getAgreement",
+    outputs: [
+      {
+        components: [
+          { internalType: "uint256", name: "agreementId", type: "uint256" },
+          { internalType: "uint256", name: "gpuId", type: "uint256" },
+          { internalType: "address payable", name: "renter", type: "address" },
+          { internalType: "uint256", name: "startTime", type: "uint256" },
+          { internalType: "uint256", name: "escrowFund", type: "uint256" },
+          { internalType: "bool", name: "isActive", type: "bool" },
+        ],
+        internalType: "struct GPURentalPlatform.RentalAgreement",
+        name: "",
+        type: "tuple",
+      },
+    ],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [],
     name: "getAllGPUs",
     outputs: [
       {
@@ -61,6 +89,13 @@ export const contractABI = [
     type: "function",
   },
   {
+    inputs: [{ internalType: "address", name: "", type: "address" }],
+    name: "providerBalances",
+    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
     inputs: [],
     name: "getPlatformBalance",
     outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
@@ -77,6 +112,16 @@ export const contractABI = [
   {
     inputs: [],
     name: "withdrawPlatformFees",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+  {
+    inputs: [
+      { internalType: "uint256", name: "_agreementId", type: "uint256" },
+      { internalType: "string", name: "_telemetryHash", type: "string" },
+    ],
+    name: "endRentalSession",
     outputs: [],
     stateMutability: "nonpayable",
     type: "function",

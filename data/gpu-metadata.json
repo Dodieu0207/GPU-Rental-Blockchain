@@ -1,0 +1,62 @@
+{
+  "mock-66e079461737f901ef7540c6f27344371e39fc93db2f49": {
+    "cid": "mock-66e079461737f901ef7540c6f27344371e39fc93db2f49",
+    "metadata": {
+      "providerId": "",
+      "machineId": "92bff929e0d0dcb7",
+      "gpuName": "NVIDIA GeForce RTX 3060",
+      "gpuCount": 1,
+      "vramGB": 12,
+      "driverVersion": "mock-driver",
+      "cudaVersion": "mock-cuda",
+      "status": "available",
+      "createdAt": "2026-07-01T07:51:52.725Z",
+      "updatedAt": "2026-07-01T07:51:56.156Z",
+      "agent": {
+        "hostname": "Admin-PC",
+        "platform": "win32",
+        "arch": "x64",
+        "dockerMode": "real"
+      },
+      "gpus": [
+        {
+          "index": 0,
+          "gpuName": "NVIDIA GeForce RTX 3060",
+          "vramGB": 12,
+          "driverVersion": "mock-driver"
+        }
+      ]
+    },
+    "updatedAt": "2026-07-01T07:52:13.689Z"
+  },
+  "mock-b30c73cf3dede441eae61edb1bec9a0f9b1ac4a117286a": {
+    "cid": "mock-b30c73cf3dede441eae61edb1bec9a0f9b1ac4a117286a",
+    "metadata": {
+      "providerId": "",
+      "machineId": "92bff929e0d0dcb7",
+      "gpuName": "NVIDIA GeForce RTX 3060",
+      "gpuCount": 1,
+      "vramGB": 12,
+      "driverVersion": "mock-driver",
+      "cudaVersion": "mock-cuda",
+      "status": "available",
+      "createdAt": "2026-07-01T08:52:00.329Z",
+      "updatedAt": "2026-07-01T08:54:02.462Z",
+      "agent": {
+        "hostname": "Admin-PC",
+        "platform": "win32",
+        "arch": "x64",
+        "dockerMode": "real"
+      },
+      "gpus": [
+        {
+          "index": 0,
+          "gpuName": "NVIDIA GeForce RTX 3060",
+          "vramGB": 12,
+          "driverVersion": "mock-driver"
+        }
+      ]
+    },
+    "updatedAt": "2026-07-01T08:54:28.557Z"
+  }
+}

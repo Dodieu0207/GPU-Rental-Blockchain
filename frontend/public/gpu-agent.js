@@ -1,17 +1,21 @@
 #!/usr/bin/env node
 
-const http = require('http');
-const os = require('os');
-const fs = require('fs/promises');
-const path = require('path');
-const crypto = require('crypto');
-const readline = require('readline/promises');
-const { stdin: input, stdout: output } = require('process');
-const { exec, execFile } = require('child_process');
-const { promisify } = require('util');
+import http from 'http';
+import os from 'os';
+import fs from 'fs/promises';
+import { readFileSync } from 'fs';
+import path from 'path';
+import crypto from 'crypto';
+import readline from 'readline/promises';
+import { stdin as input, stdout as output } from 'process';
+import { exec, execFile } from 'child_process';
+import { fileURLToPath } from 'url';
+import { promisify } from 'util';
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 loadEnvFile(path.join(__dirname, '.env'));
 
@@ -29,8 +33,10 @@ const CONFIG = {
   pinataApiKey: process.env.PINATA_API_KEY || '',
   pinataSecretApiKey: process.env.PINATA_SECRET_API_KEY || '',
   localIpfsApiUrl: process.env.IPFS_API_URL || 'http://127.0.0.1:5001',
-  dockerMode: process.env.AGENT_DOCKER_MODE || 'mock',
-  dockerImage: process.env.AGENT_DOCKER_IMAGE || 'jupyter/tensorflow-notebook:latest',
+  dockerMode: process.env.AGENT_DOCKER_MODE || 'real',
+  dockerImage: process.env.AGENT_DOCKER_IMAGE || 'lscr.io/linuxserver/openssh-server:latest',
+  dockerEnableGpu: process.env.AGENT_ENABLE_GPU === 'true',
+  sshUsername: process.env.AGENT_SSH_USERNAME || 'decompute',
   publicBaseUrl: process.env.AGENT_PUBLIC_BASE_URL || '',
 };
 
@@ -51,7 +57,7 @@ const MOCK_GPU = {
 
 function loadEnvFile(envPath) {
   try {
-    const text = require('fs').readFileSync(envPath, 'utf8');
+    const text = readFileSync(envPath, 'utf8');
     for (const line of text.split(/\r?\n/)) {
       const trimmed = line.trim();
       if (!trimmed || trimmed.startsWith('#') || !trimmed.includes('=')) continue;
@@ -285,46 +291,72 @@ async function startRental(payload) {
 
   const sessionId = payload.sessionId || crypto.randomUUID();
   const durationSeconds = Number(payload.durationSeconds || payload.durationMinutes * 60 || 3600);
-  const hostPort = Number(payload.hostPort || 8888);
-  const token = payload.token || crypto.randomBytes(16).toString('hex');
+  const sshPort = Number(payload.sshPort || payload.hostPort || await findOpenPort());
+  const sshPassword = payload.password || crypto.randomBytes(8).toString('hex');
   const startedAt = new Date();
   const endsAt = new Date(startedAt.getTime() + durationSeconds * 1000);
 
   let containerId = `mock-${sessionId}`;
-  let accessUrl =
-    payload.accessUrl ||
-    `${CONFIG.publicBaseUrl || `http://localhost:${hostPort}`}/?token=${encodeURIComponent(token)}`;
   let mode = 'mock';
+  let status = 'running';
 
-  if (CONFIG.dockerMode === 'real') {
-    const result = await execFileAsync('docker', [
+  if (CONFIG.dockerMode !== 'mock') {
+    await assertDockerAvailable();
+    const dockerArgs = [
       'run',
       '-d',
       '--rm',
-      '--gpus',
-      'all',
       '-p',
-      `${hostPort}:8888`,
+      `${sshPort}:2222`,
       '-e',
-      `JUPYTER_TOKEN=${token}`,
+      'PASSWORD_ACCESS=true',
+      '-e',
+      `USER_NAME=${CONFIG.sshUsername}`,
+      '-e',
+      `USER_PASSWORD=${sshPassword}`,
+      '-e',
+      'SUDO_ACCESS=false',
+      '-e',
+      'TZ=Etc/UTC',
+      '-e',
+      'PUID=1000',
+      '-e',
+      'PGID=1000',
       '--name',
       `decompute-${sessionId}`,
-      CONFIG.dockerImage,
-    ]);
+      CONFIG.dockerImage
+    ];
+
+    const result = await runDockerContainer(dockerArgs);
     containerId = result.stdout.trim();
+    await ensureContainerPassword(containerId, CONFIG.sshUsername, sshPassword);
     mode = 'docker';
+    status = 'running';
+    console.log(`Container started ${containerId} port ${sshPort}`);
   }
 
   gpuStatus = 'rented';
+  const accessInfo = {
+    host: payload.host || 'localhost',
+    address: payload.host || 'localhost',
+    sshPort,
+    username: CONFIG.sshUsername,
+    password: sshPassword,
+    containerId,
+    sessionId,
+    rentalId: payload.rentalId || sessionId,
+    sshCommand: `ssh ${CONFIG.sshUsername}@${payload.host || 'localhost'} -p ${sshPort}`
+  };
+
   const session = {
     sessionId,
     rentalId: payload.rentalId || sessionId,
     gpuId: payload.gpuId,
     renterId: payload.renterId,
     containerId,
-    status: 'running',
+    status,
     mode,
-    accessUrl,
+    accessInfo,
     startedAt: startedAt.toISOString(),
     endsAt: endsAt.toISOString(),
   };
@@ -342,29 +374,181 @@ async function startRental(payload) {
 async function stopRental(payload) {
   const sessionId = payload.sessionId || payload.rentalId;
   const session = sessions.get(sessionId);
+  const containerId = payload.containerId || session?.containerId || await findContainerIdByName(`decompute-${sessionId}`);
 
-  if (!session) {
-    throw new Error('Rental session not found.');
+  if (!session && !containerId) {
+    gpuStatus = 'available';
+    return {
+      sessionId,
+      rentalId: payload.rentalId || sessionId,
+      status: 'stopped',
+      stopReason: 'already-stopped-or-not-found'
+    };
   }
 
-  if (session.timer) {
+  if (session.status === 'stopped') {
+    return withoutTimer(session);
+  }
+
+  if (session?.timer) {
     clearTimeout(session.timer);
   }
 
-  if (session.mode === 'docker') {
-    await execFileAsync('docker', ['stop', session.containerId]);
+  if (containerId && CONFIG.dockerMode !== 'mock') {
+    await stopContainer(containerId);
   }
 
-  session.status = 'stopped';
-  session.stoppedAt = new Date().toISOString();
-  session.stopReason = payload.reason || 'manual';
-  gpuStatus = 'available';
+  const stoppedSession = session || {
+    sessionId,
+    rentalId: payload.rentalId || sessionId,
+    containerId,
+    mode: containerId ? 'docker' : 'mock',
+    accessInfo: { containerId },
+  };
 
-  await notifyBackendRentalStopped(session).catch((error) => {
+  stoppedSession.status = 'stopped';
+  stoppedSession.stoppedAt = new Date().toISOString();
+  stoppedSession.stopReason = payload.reason || 'manual';
+  gpuStatus = 'available';
+  if (sessionId) sessions.delete(sessionId);
+
+  await notifyBackendRentalStopped(stoppedSession).catch((error) => {
     console.warn('Could not notify backend about stopped rental:', error.message);
   });
 
-  return withoutTimer(session);
+  return withoutTimer(stoppedSession);
+}
+
+async function runDockerContainer(args) {
+  if (CONFIG.dockerEnableGpu) {
+    try {
+      return await execFileAsync('docker', ['run', '-d', '--rm', '--gpus', 'all', ...args.slice(3)], { windowsHide: true });
+    } catch (error) {
+      console.warn(`GPU Docker start failed, retrying without --gpus all: ${error.message}`);
+      // Retry without GPU passthrough so the SSH demo still works on non-CUDA machines.
+    }
+  }
+
+  return execFileAsync('docker', args, { windowsHide: true });
+}
+
+async function assertDockerAvailable() {
+  try {
+    await execFileAsync('docker', ['version', '--format', '{{.Server.Version}}'], { windowsHide: true });
+  } catch (error) {
+    throw new Error(`Docker is not reachable: ${error.message}`);
+  }
+}
+
+async function ensureContainerPassword(containerId, username, password) {
+  await new Promise((resolve) => setTimeout(resolve, 5000));
+  try {
+    await execFileAsync(
+      'docker',
+      [
+        'exec',
+        '-e',
+        `DECOMPUTE_SSH_USER=${username}`,
+        '-e',
+        `DECOMPUTE_SSH_PASSWORD=${password}`,
+        containerId,
+        'sh',
+        '-lc',
+        'printf "%s:%s\\n" "$DECOMPUTE_SSH_USER" "$DECOMPUTE_SSH_PASSWORD" | chpasswd'
+      ],
+      { windowsHide: true }
+    );
+  } catch (error) {
+    throw new Error(`SSH password setup failed: ${error.message}`);
+  }
+}
+
+async function findOpenPort() {
+  for (let port = 2200; port <= 2299; port++) {
+    try {
+      await execAsync(`netstat -ano | findstr :${port}`);
+    } catch {
+      return port;
+    }
+  }
+  return 2222;
+}
+
+async function findContainerIdByName(name) {
+  if (!name || CONFIG.dockerMode === 'mock') return '';
+  try {
+    const { stdout } = await execFileAsync(
+      'docker',
+      ['ps', '-a', '--filter', `name=^/${name}$`, '--format', '{{.ID}}'],
+      { windowsHide: true }
+    );
+    return stdout.trim().split(/\r?\n/).filter(Boolean)[0] || '';
+  } catch {
+    return '';
+  }
+}
+
+async function stopContainer(containerId) {
+  try {
+    await execFileAsync('docker', ['stop', containerId], { windowsHide: true });
+  } catch (error) {
+    if (!String(error.message).includes('No such container')) {
+      console.warn(`docker stop skipped for ${containerId}: ${error.message}`);
+    }
+  }
+
+  try {
+    await execFileAsync('docker', ['rm', '-f', containerId], { windowsHide: true });
+  } catch (error) {
+    if (!String(error.message).includes('No such container')) {
+      console.warn(`docker rm skipped for ${containerId}: ${error.message}`);
+    }
+  }
+}
+
+async function listDecomputeContainers() {
+  if (CONFIG.dockerMode === 'mock') return [];
+  try {
+    const { stdout } = await execFileAsync(
+      'docker',
+      ['ps', '-a', '--filter', 'name=decompute-', '--format', '{{json .}}'],
+      { windowsHide: true }
+    );
+    return stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+  } catch {
+    return [];
+  }
+}
+
+async function cleanupDecomputeContainers() {
+  const containers = await listDecomputeContainers();
+  const stopped = [];
+  for (const container of containers) {
+    const id = container.ID || container.ID;
+    if (!id) continue;
+    await stopContainer(id);
+    stopped.push({
+      id,
+      name: container.Names || container.Name || '',
+      status: 'removed',
+    });
+  }
+  if (stopped.length > 0) {
+    gpuStatus = 'available';
+  }
+  return { ok: true, stopped };
+}
+
+async function getUsedPorts() {
+  const containers = await listDecomputeContainers();
+  return containers
+    .flatMap((container) => String(container.Ports || '').match(/0\.0\.0\.0:(\d+)->2222|127\.0\.0\.1:(\d+)->2222|\[::\]:(\d+)->2222/g) || [])
+    .map((match) => Number(match.match(/:(\d+)->2222/)?.[1]))
+    .filter((port) => Number.isFinite(port));
 }
 
 async function notifyBackendRentalStopped(session) {
@@ -381,12 +565,61 @@ async function notifyBackendRentalStopped(session) {
 
 async function getAgentStatus() {
   const { metadata } = await createMetadata();
+  const docker = await getDockerStatus();
   return {
     status: gpuStatus,
     metadata,
+    docker,
     sessions: [...sessions.values()].map(withoutTimer),
     heartbeatAt: new Date().toISOString(),
   };
+}
+
+async function getDockerStatus() {
+  if (CONFIG.dockerMode === 'mock') {
+    return {
+      available: false,
+      dockerAvailable: false,
+      canRunContainer: false,
+      mode: 'mock',
+      message: 'Docker mock mode enabled.',
+      lastDockerCheck: new Date().toISOString(),
+      runningDecomputeContainers: [],
+      usedPorts: [],
+    };
+  }
+
+  try {
+    const { stdout } = await execFileAsync('docker', ['--version'], { windowsHide: true });
+    const runningDecomputeContainers = await listDecomputeContainers();
+    const usedPorts = await getUsedPorts();
+    const warning = usedPorts.includes(2200)
+      ? 'Port 2200 is already used by a DeCompute container. New sessions will use the next free port.'
+      : '';
+    return {
+      available: true,
+      dockerAvailable: true,
+      canRunContainer: true,
+      mode: CONFIG.dockerMode,
+      version: stdout.trim(),
+      dockerVersion: stdout.trim(),
+      lastDockerCheck: new Date().toISOString(),
+      runningDecomputeContainers,
+      usedPorts,
+      warning,
+    };
+  } catch (error) {
+    return {
+      available: false,
+      dockerAvailable: false,
+      canRunContainer: false,
+      mode: CONFIG.dockerMode,
+      message: `Docker not ready. Scan still works; container rental needs Docker running. ${error.message}`,
+      lastDockerCheck: new Date().toISOString(),
+      runningDecomputeContainers: [],
+      usedPorts: [],
+    };
+  }
 }
 
 function withoutTimer(session) {
@@ -402,16 +635,30 @@ async function readJsonBody(request) {
 }
 
 function sendJson(response, statusCode, body) {
-  response.writeHead(statusCode, { 'Content-Type': 'application/json' });
+  response.writeHead(statusCode, {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  });
   response.end(JSON.stringify(body, null, 2));
 }
 
 async function handleAgentRequest(request, response) {
   try {
     const url = new URL(request.url, `http://${request.headers.host}`);
+    console.log(`${request.method} ${url.pathname}`);
+
+    if (request.method === 'OPTIONS') {
+      return sendJson(response, 204, {});
+    }
 
     if (request.method === 'GET' && url.pathname === '/status') {
       return sendJson(response, 200, await getAgentStatus());
+    }
+
+    if (request.method === 'GET' && url.pathname === '/health') {
+      return sendJson(response, 200, { ok: true, ...(await getAgentStatus()) });
     }
 
     if (request.method === 'GET' && url.pathname === '/metadata') {
@@ -425,12 +672,40 @@ async function handleAgentRequest(request, response) {
       return sendJson(response, 200, { metadata, metadataPath, ipfs, cid: ipfs.cid });
     }
 
-    if (request.method === 'POST' && url.pathname === '/commands/startRental') {
-      return sendJson(response, 200, await startRental(await readJsonBody(request)));
+    if (request.method === 'POST' && url.pathname === '/scan') {
+      const { metadata, metadataPath } = await createMetadata();
+      const ipfs = await uploadMetadataToIPFS(metadata);
+      return sendJson(response, 200, {
+        status: 'success',
+        cid: ipfs.cid,
+        metadata: {
+          gpu: metadata.gpuName,
+          vram: `${metadata.vramGB} GB`,
+          cuda: metadata.cudaVersion,
+          os: metadata.agent.platform,
+        },
+        raw: { metadata, metadataPath, ipfs }
+      });
     }
 
-    if (request.method === 'POST' && url.pathname === '/commands/stopRental') {
+    if (
+      request.method === 'POST' &&
+      (url.pathname === '/commands/startRental' || url.pathname === '/sessions/start')
+    ) {
+      const body = await readJsonBody(request);
+      console.log(`Starting session request rentalId=${body.rentalId || ''} gpuId=${body.gpuId || ''} cid=${body.cid || ''}`);
+      return sendJson(response, 200, await startRental(body));
+    }
+
+    if (
+      request.method === 'POST' &&
+      (url.pathname === '/commands/stopRental' || url.pathname === '/sessions/stop')
+    ) {
       return sendJson(response, 200, await stopRental(await readJsonBody(request)));
+    }
+
+    if (request.method === 'POST' && url.pathname === '/sessions/cleanup') {
+      return sendJson(response, 200, await cleanupDecomputeContainers());
     }
 
     if (request.method === 'POST' && url.pathname === '/commands/getStatus') {

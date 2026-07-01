@@ -31,6 +31,16 @@ contract GPURentalPlatform is Ownable, ReentrancyGuard {
         Maintenance
     }
 
+    enum TransactionType {
+        EscrowDeposited,
+        RentalPaymentRecorded,
+        PlatformFeeRecorded,
+        RefundPaid,
+        ProviderWithdrawal,
+        PlatformWithdrawal,
+        SlashingCompensation
+    }
+
     /**
      * @dev Thông tin một GPU được đăng ký bởi chủ máy.
      * gpuId: ID duy nhất của GPU trong hệ thống.
@@ -82,11 +92,24 @@ contract GPURentalPlatform is Ownable, ReentrancyGuard {
         uint256 refundAmount;
     }
 
+    struct PlatformTransaction {
+        uint256 transactionId;
+        uint256 agreementId;
+        uint256 gpuId;
+        address from;
+        address to;
+        uint256 amount;
+        uint256 timestamp;
+        TransactionType transactionType;
+    }
+
     /// @dev Lưu thông tin GPU theo gpuId.
     mapping(uint256 => GPU) public gpus;
 
     /// @dev Lưu thông tin phiên thuê theo agreementId.
     mapping(uint256 => RentalAgreement) public agreements;
+
+    mapping(uint256 => PlatformTransaction) public transactions;
 
     /// @dev Tổng số ETH mà mỗi chủ máy đã staking vào nền tảng.
     mapping(address => uint256) public ownerStakedBalance;
@@ -100,6 +123,8 @@ contract GPURentalPlatform is Ownable, ReentrancyGuard {
 
     /// @dev ID sẽ được dùng cho phiên thuê tiếp theo. Agreement đầu tiên có ID = 0.
     uint256 public nextAgreementId;
+
+    uint256 public nextTransactionId;
 
     /// @dev Mức staking tối thiểu để đăng ký một GPU: 0.05 ETH.
     uint256 public constant MIN_STAKE = 0.05 ether;
@@ -206,6 +231,18 @@ contract GPURentalPlatform is Ownable, ReentrancyGuard {
         address indexed owner,
         uint256 amount
     );
+
+    event TransactionRecorded(
+        uint256 indexed transactionId,
+        uint256 indexed agreementId,
+        uint256 indexed gpuId,
+        address from,
+        address to,
+        uint256 amount,
+        uint256 timestamp,
+        TransactionType transactionType
+    );
+
     constructor() Ownable(msg.sender) {
         platformAdmin = payable(msg.sender);
     }
@@ -372,6 +409,15 @@ contract GPURentalPlatform is Ownable, ReentrancyGuard {
         // Tăng ID cho phiên thuê tiếp theo.
         nextAgreementId++;
 
+        _recordTransaction(
+            agreementId,
+            _gpuId,
+            msg.sender,
+            address(this),
+            msg.value,
+            TransactionType.EscrowDeposited
+        );
+
         // Ghi log để frontend/backend dễ theo dõi phiên thuê vừa bắt đầu.
         emit RentalStarted(
             agreementId,
@@ -459,6 +505,26 @@ contract GPURentalPlatform is Ownable, ReentrancyGuard {
         providerBalances[gpu.owner] += settlement.ownerPayment;
         platformBalance += settlement.platformFee;
 
+        // Pull-payment accounting: these records credit balances inside the
+        // contract. ETH leaves only when the withdrawal functions are called.
+        _recordTransaction(
+            _agreementId,
+            agreement.gpuId,
+            address(this),
+            gpu.owner,
+            settlement.ownerPayment,
+            TransactionType.RentalPaymentRecorded
+        );
+
+        _recordTransaction(
+            _agreementId,
+            agreement.gpuId,
+            address(this),
+            owner(),
+            settlement.platformFee,
+            TransactionType.PlatformFeeRecorded
+        );
+
         emit ProviderEarningsRecorded(
             _agreementId,
             gpu.owner,
@@ -473,6 +539,15 @@ contract GPURentalPlatform is Ownable, ReentrancyGuard {
         );
 
         _safeTransferETH(agreement.renter, settlement.refundAmount);
+
+        _recordTransaction(
+            _agreementId,
+            agreement.gpuId,
+            address(this),
+            agreement.renter,
+            settlement.refundAmount,
+            TransactionType.RefundPaid
+        );
 
         _emitRentalEnded(_agreementId, agreement, gpu, settlement, _telemetryHash);
     }
@@ -536,6 +611,15 @@ contract GPURentalPlatform is Ownable, ReentrancyGuard {
         // Dùng _safeTransferETH để chuyển bằng call, không dùng transfer.
         _safeTransferETH(agreement.renter, totalCompensation);
 
+        _recordTransaction(
+            _agreementId,
+            agreement.gpuId,
+            gpu.owner,
+            agreement.renter,
+            totalCompensation,
+            TransactionType.SlashingCompensation
+        );
+
         emit SlashingExecuted(
             _agreementId,
             agreement.gpuId,
@@ -554,6 +638,15 @@ contract GPURentalPlatform is Ownable, ReentrancyGuard {
         providerBalances[msg.sender] = 0;
         _safeTransferETH(payable(msg.sender), amount);
 
+        _recordTransaction(
+            0,
+            0,
+            address(this),
+            msg.sender,
+            amount,
+            TransactionType.ProviderWithdrawal
+        );
+
         emit ProviderEarningsWithdrawn(msg.sender, amount);
     }
 
@@ -563,6 +656,15 @@ contract GPURentalPlatform is Ownable, ReentrancyGuard {
 
         platformBalance = 0;
         _safeTransferETH(payable(owner()), amount);
+
+        _recordTransaction(
+            0,
+            0,
+            address(this),
+            owner(),
+            amount,
+            TransactionType.PlatformWithdrawal
+        );
 
         emit PlatformFeesWithdrawn(owner(), amount);
     }
@@ -607,6 +709,42 @@ contract GPURentalPlatform is Ownable, ReentrancyGuard {
     {
         require(_agreementId < nextAgreementId, "Agreement does not exist");
         return agreements[_agreementId];
+    }
+
+    function _recordTransaction(
+        uint256 _agreementId,
+        uint256 _gpuId,
+        address _from,
+        address _to,
+        uint256 _amount,
+        TransactionType _transactionType
+    ) internal {
+        uint256 transactionId = nextTransactionId;
+        uint256 timestamp = block.timestamp;
+
+        transactions[transactionId] = PlatformTransaction({
+            transactionId: transactionId,
+            agreementId: _agreementId,
+            gpuId: _gpuId,
+            from: _from,
+            to: _to,
+            amount: _amount,
+            timestamp: timestamp,
+            transactionType: _transactionType
+        });
+
+        emit TransactionRecorded(
+            transactionId,
+            _agreementId,
+            _gpuId,
+            _from,
+            _to,
+            _amount,
+            timestamp,
+            _transactionType
+        );
+
+        nextTransactionId++;
     }
 
     /**

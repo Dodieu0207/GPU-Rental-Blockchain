@@ -1,66 +1,40 @@
-"use client";
-
-import { useMemo, useState } from "react";
 import type { Transaction } from "@/lib/types";
+import { shortenAddress } from "@/lib/format";
 
 export function TransactionTable({ transactions }: { transactions: Transaction[] }) {
-  const [status, setStatus] = useState("All");
-  const [type, setType] = useState("All");
-
-  const filtered = useMemo(
-    () =>
-      transactions.filter(
-        (transaction) =>
-          (status === "All" || transaction.status === status) &&
-          (type === "All" || transaction.type === type),
-      ),
-    [status, transactions, type],
-  );
-
   return (
-    <section className="rounded-lg border border-line bg-white p-5 shadow-soft">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h2 className="text-xl font-bold text-ink">Transaction History</h2>
-        <div className="flex flex-wrap gap-2">
-          <select
-            value={status}
-            onChange={(event) => setStatus(event.target.value)}
-            className="rounded-md border border-line px-3 py-2 text-sm"
-          >
-            {["All", "Success", "Pending", "Failed"].map((item) => (
-              <option key={item}>{item}</option>
-            ))}
-          </select>
-          <select
-            value={type}
-            onChange={(event) => setType(event.target.value)}
-            className="rounded-md border border-line px-3 py-2 text-sm"
-          >
-            {["All", "Rent", "Deposit", "Withdraw", "Extend", "End Rental"].map(
-              (item) => (
-                <option key={item}>{item}</option>
-              ),
-            )}
-          </select>
-        </div>
-      </div>
-      <div className="mt-5 overflow-x-auto">
-        <table className="w-full text-left text-sm">
-          <thead className="border-b border-line text-gray-500">
+    <section className="overflow-hidden rounded-lg bg-white text-ink shadow-soft">
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[1100px] text-left text-sm">
+          <thead className="border-b border-line bg-gray-50 text-gray-500">
             <tr>
-              <th className="py-3 pr-4">Date</th>
-              <th className="py-3 pr-4">Type</th>
-              <th className="py-3 pr-4">Status</th>
-              <th className="py-3 pr-4">Amount</th>
+              {["Transaction ID", "Type", "From", "To", "Amount", "Time", "Status", "Transaction Hash", "Action", "Rental ID", "GPU"].map((header) => (
+                <th key={header} className="px-4 py-3 font-semibold">{header}</th>
+              ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-line">
-            {filtered.map((transaction) => (
-              <tr key={transaction.id}>
-                <td className="py-3 pr-4">{transaction.date}</td>
-                <td className="py-3 pr-4">{transaction.type}</td>
-                <td className="py-3 pr-4">{transaction.status}</td>
-                <td className="py-3 pr-4">{transaction.amountEth} ETH</td>
+            {transactions.map((transaction) => (
+              <tr key={`${transaction.transactionId}-${transaction.txHash}`}>
+                <td className="px-4 py-3">{transaction.transactionId}</td>
+                <td className="px-4 py-3">{transaction.type}</td>
+                <td className="px-4 py-3">{shortenAddress(transaction.from)}</td>
+                <td className="px-4 py-3">{shortenAddress(transaction.to)}</td>
+                <td className="px-4 py-3">{transaction.amount} ETH</td>
+                <td className="px-4 py-3">{transaction.time}</td>
+                <td className="px-4 py-3">{transaction.status}</td>
+                <td className="px-4 py-3">{transaction.txHash ? shortenAddress(transaction.txHash) : "Not available"}</td>
+                <td className="px-4 py-3">
+                  {transaction.txHash ? (
+                    <a href={`https://sepolia.etherscan.io/tx/${transaction.txHash}`} target="_blank" rel="noreferrer" className="font-semibold text-violet-700 hover:underline">
+                      View on Etherscan
+                    </a>
+                  ) : (
+                    "Not available"
+                  )}
+                </td>
+                <td className="px-4 py-3">{transaction.rentalId ?? "Not available"}</td>
+                <td className="px-4 py-3">{transaction.gpu ?? "Not available"}</td>
               </tr>
             ))}
           </tbody>

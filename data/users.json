@@ -1,0 +1,16 @@
+[
+  {
+    "walletAddress": "0xeb5db0bc882b30cf8f0489eb5af4e39dea5522e1",
+    "role": "provider",
+    "createdAt": "2026-07-01T07:50:28.456Z",
+    "lastLogin": "2026-07-01T09:02:24.405Z",
+    "seeded": true
+  },
+  {
+    "walletAddress": "0x2a88b29e5cc9e137552b9b8aae3b66b27a784723",
+    "role": "renter",
+    "createdAt": "2026-07-01T07:50:28.456Z",
+    "lastLogin": "2026-07-01T08:54:41.111Z",
+    "seeded": true
+  }
+]

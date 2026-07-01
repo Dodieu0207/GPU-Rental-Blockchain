@@ -1,200 +1,163 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { GPUCard } from "@/components/gpu/GPUCard";
+import { GPUDetailModal } from "@/components/gpu/GPUDetailModal";
+import { RentConfirmationModal } from "@/components/gpu/RentConfirmationModal";
 import { StatusMessage } from "@/components/StatusMessage";
+import { EmptyState, LoadingState } from "@/components/ui/States";
 import { useWallet } from "@/components/WalletProvider";
-import { demoGPUs } from "@/lib/demoData";
+import { createRental, fetchGpuMarketplace } from "@/lib/api";
 import { isContractConfigured, readGPUsFromContract, rentGPU } from "@/lib/contract";
 import type { GPU } from "@/lib/types";
 
+type Filter = "all" | "available" | "unavailable";
+
 export default function MarketplacePage() {
-  const { account, connectWallet, getProvider, isConnected, isSepolia, role } = useWallet();
-  const [gpus, setGPUs] = useState<GPU[]>(demoGPUs);
-  const [filter, setFilter] = useState<"all" | "available" | "unavailable">("all");
-  const [hoursByGpu, setHoursByGpu] = useState<Record<string, number>>(
-    Object.fromEntries(demoGPUs.map((gpu) => [gpu.id, 1])),
-  );
-  const [isLoading, setIsLoading] = useState(false);
+  const { account, connectWallet, getProvider, role } = useWallet();
+  const [gpus, setGPUs] = useState<GPU[]>([]);
+  const [filter, setFilter] = useState<Filter>("all");
+  const [hoursByGpu, setHoursByGpu] = useState<Record<string, number>>({});
+  const [isLoading, setIsLoading] = useState(true);
   const [rentingGpuId, setRentingGpuId] = useState<string | null>(null);
-  const [message, setMessage] = useState<{
-    type: "info" | "success" | "error" | "warning";
-    text: string;
-  } | null>(null);
+  const [selectedGpu, setSelectedGpu] = useState<GPU | null>(null);
+  const [pendingRentalGpu, setPendingRentalGpu] = useState<GPU | null>(null);
+  const [rentStatus, setRentStatus] = useState("");
+  const [message, setMessage] = useState<{ type: "info" | "success" | "error" | "warning"; text: string } | null>(null);
 
   const loadGPUs = useCallback(async () => {
-    const provider = getProvider();
-    if (!provider || !isContractConfigured()) {
-      try {
-        const response = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:5000"}/api/gpus`);
-        const backendGPUs = await response.json();
-        if (!response.ok) throw new Error(backendGPUs.error || "Backend GPU load failed.");
-
-        setGPUs(
-          backendGPUs.map((gpu: {
-            id: string;
-            spec?: string;
-            cid?: string;
-            pricePerHourWei?: string;
-            status?: string;
-            providerId?: string;
-          }) => ({
-            id: gpu.id,
-            name: gpu.spec || `GPU metadata ${gpu.cid}`,
-            vram: gpu.spec?.match(/(\d+(?:\.\d+)?)\s*GB/i)?.[0] ?? "See IPFS metadata",
-            priceEth: gpu.pricePerHourWei
-              ? (Number(gpu.pricePerHourWei) / 1e18).toString()
-              : "0",
-            priceWei: gpu.pricePerHourWei,
-            available: gpu.status === "available",
-            provider: gpu.providerId || "Unknown provider",
-            cid: gpu.cid,
-          })),
-        );
-        setMessage({
-          type: "success",
-          text: "Loaded GPU list from backend.",
-        });
-      } catch {
-        setMessage({
-          type: "warning",
-          text: "Showing demo GPUs. Start backend or add contract address to read live data.",
-        });
-      }
-      return;
-    }
-
     setIsLoading(true);
     try {
-      const contractGPUs = await readGPUsFromContract(provider);
-      setGPUs(contractGPUs);
+      let contractGpus: GPU[] = [];
+      const provider = getProvider();
+      if (provider && isContractConfigured()) {
+        try {
+          contractGpus = await readGPUsFromContract(provider);
+        } catch (error) {
+          setMessage({ type: "warning", text: error instanceof Error ? `Could not refresh on-chain GPUs: ${error.message}` : "Could not refresh on-chain GPUs." });
+        }
+      }
+      const rows = await fetchGpuMarketplace(contractGpus);
+      setGPUs(rows);
       setHoursByGpu((current) => ({
-        ...Object.fromEntries(contractGPUs.map((gpu) => [gpu.id, current[gpu.id] ?? 1])),
+        ...Object.fromEntries(rows.map((gpu) => [gpu.id, current[gpu.id] ?? 1])),
       }));
-      setMessage({
-        type: "success",
-        text: "Loaded GPU list from smart contract.",
-      });
     } catch (error) {
-      setMessage({
-        type: "error",
-        text:
-          error instanceof Error
-            ? error.message
-            : "Could not read GPU list from smart contract.",
-      });
+      setMessage({ type: "error", text: error instanceof Error ? error.message : "Could not load GPUs." });
     } finally {
       setIsLoading(false);
     }
   }, [getProvider]);
 
   useEffect(() => {
-    if (isConnected) {
-      void loadGPUs();
-    }
-  }, [isConnected, loadGPUs]);
+    void loadGPUs();
+  }, [loadGPUs]);
+
+  const visibleGPUs = useMemo(
+    () =>
+      gpus.filter((gpu) => {
+        if (filter === "available") return gpu.status === "available";
+        if (filter === "unavailable") return gpu.status !== "available";
+        return true;
+      }),
+    [filter, gpus],
+  );
 
   const handleRent = async (gpu: GPU) => {
-    setMessage(null);
+    if (gpu.source !== "contract") {
+      setMessage({
+        type: "warning",
+        text: "Only GPUs registered on-chain can be rented.",
+      });
+      return;
+    }
+
+    if (gpu.status !== "available") {
+      setMessage({ type: "warning", text: "This GPU is unavailable." });
+      return;
+    }
+
+    if (!isContractConfigured()) {
+      setMessage({
+        type: "warning",
+        text: "Contract address is not configured. Add NEXT_PUBLIC_CONTRACT_ADDRESS before renting.",
+      });
+      return;
+    }
 
     if (!account) {
       await connectWallet();
       return;
     }
 
-    if (!isSepolia) {
-      setMessage({
-        type: "warning",
-        text: "Please switch MetaMask to Sepolia before renting.",
-      });
+    if (role !== "tenant") {
+      setMessage({ type: "warning", text: "Switch role to Tenant before renting a GPU." });
       return;
     }
 
-    if (role !== "renter") {
-      setMessage({
-        type: "warning",
-        text: "Switch role to Renter before renting GPU compute.",
-      });
+    if (gpu.provider.toLowerCase() === account.toLowerCase()) {
+      setMessage({ type: "warning", text: "The host wallet cannot rent its own GPU. Switch to Account 2." });
+      return;
+    }
+
+    setPendingRentalGpu(gpu);
+    setRentStatus("");
+  };
+
+  const confirmRent = async () => {
+    const gpu = pendingRentalGpu;
+    if (!gpu) return;
+    if (!account) {
+      await connectWallet();
       return;
     }
 
     const provider = getProvider();
     if (!provider) {
-      setMessage({
-        type: "error",
-        text: "MetaMask provider not found.",
-      });
+      setMessage({ type: "error", text: "MetaMask provider not found." });
       return;
     }
 
     setRentingGpuId(gpu.id);
-    setMessage({
-      type: "info",
-      text: `MetaMask should open now. Confirm ${hoursByGpu[gpu.id] ?? 1} hour(s) for ${gpu.name}.`,
-    });
+    setRentStatus("Confirming transaction...");
+    setMessage({ type: "info", text: "Confirming transaction..." });
 
     try {
       const hours = hoursByGpu[gpu.id] ?? 1;
-      const rentalTx = await rentGPU(provider, gpu, hours);
+      let txHash: string | undefined;
+      let agreementId: string | null | undefined;
 
-      await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:5000"}/api/rentals`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-User-Role": "tenant",
-          "X-User-Id": account,
-          "X-Wallet-Address": account,
-        },
-        body: JSON.stringify({
-          gpuId: gpu.id,
-          cid: gpu.cid,
-          renterId: account,
-          renterWalletAddress: account,
-          hours,
-          durationSeconds: hours * 3600,
-          smartContractAgreementId: rentalTx.agreementId,
-          escrowTxHash: rentalTx.receipt?.hash,
-        }),
-      }).catch(() => null);
-      setMessage({
-        type: "success",
-        text: `Rental transaction confirmed for ${gpu.name}. Active rental created.`,
+      const rentalTx = await rentGPU(provider, gpu, hours, (text, hash) => {
+        setRentStatus("Confirming transaction...");
+        setMessage({ type: "info", text: hash ? `${text}. Tx: ${hash}` : text });
       });
-      setGPUs((current) =>
-        current.map((item) =>
-          item.id === gpu.id ? { ...item, available: false } : item,
-        ),
-      );
+      txHash = rentalTx.receipt?.hash;
+      agreementId = rentalTx.agreementId;
+
+      setRentStatus("Starting Docker container...");
+      await createRental({ account, gpu, hours, txHash, agreementId });
+      setRentStatus("Generating SSH access...");
+      await new Promise((resolve) => window.setTimeout(resolve, 500));
+      await loadGPUs();
+      setRentStatus("Machine is ready!");
+      setMessage({ type: "success", text: `Machine is ready. Open Active Rentals to copy SSH access. Tx: ${txHash ?? "confirmed"}` });
+      window.setTimeout(() => setPendingRentalGpu(null), 1200);
     } catch (error) {
-      setMessage({
-        type: "error",
-        text:
-          error instanceof Error
-            ? error.message
-            : "Rental transaction failed.",
-      });
+      setMessage({ type: "error", text: error instanceof Error ? error.message : "Rental failed." });
+      setRentStatus("");
     } finally {
       setRentingGpuId(null);
     }
   };
 
-  const visibleGPUs = gpus.filter((gpu) => {
-    if (filter === "available") return gpu.available;
-    if (filter === "unavailable") return !gpu.available;
-    return true;
-  });
-
   return (
-    <section className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+    <section className="space-y-8">
+      <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <p className="text-sm font-semibold uppercase tracking-wide text-brand">
-            Marketplace
-          </p>
-          <h1 className="mt-2 text-3xl font-bold text-ink">Browse GPUs</h1>
-          <p className="mt-2 max-w-2xl text-gray-600">
-            Filter GPU machines, choose rental hours, confirm, then send the
-            blockchain transaction through MetaMask.
+          <p className="text-sm font-semibold uppercase tracking-wide text-violet-300">Marketplace</p>
+          <h1 className="mt-2 text-4xl font-bold">Browse GPUs</h1>
+          <p className="mt-3 max-w-2xl text-violet-100">
+            Choose an on-chain registered machine, inspect details, then rent through the Sepolia contract.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -206,28 +169,22 @@ export default function MarketplacePage() {
             <button
               key={value}
               type="button"
-              onClick={() => setFilter(value as typeof filter)}
+              onClick={() => setFilter(value as Filter)}
               className={`rounded-md px-4 py-2 text-sm font-semibold ${
-                filter === value
-                  ? "bg-brand text-white"
-                  : "border border-line bg-white text-ink hover:bg-gray-50"
+                filter === value ? "bg-violet-600 text-white ring-1 ring-violet-400" : "bg-white text-ink"
               }`}
             >
               {label}
             </button>
           ))}
-          <button
-            type="button"
-            onClick={loadGPUs}
-            disabled={isLoading}
-            className="rounded-md border border-line bg-white px-4 py-2 text-sm font-semibold text-ink hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-70"
-          >
-            {isLoading ? "Loading..." : "Reload GPUs"}
-          </button>
         </div>
       </div>
 
       {message ? <StatusMessage type={message.type}>{message.text}</StatusMessage> : null}
+      {isLoading ? <LoadingState title="Loading GPU marketplace" /> : null}
+      {!isLoading && visibleGPUs.length === 0 ? (
+        <EmptyState title="No GPUs" message="No machines match this availability filter." />
+      ) : null}
 
       <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
         {visibleGPUs.map((gpu) => (
@@ -235,24 +192,30 @@ export default function MarketplacePage() {
             key={gpu.id}
             gpu={gpu}
             hours={hoursByGpu[gpu.id] ?? 1}
-            disabled={!isConnected || !isSepolia || role !== "renter"}
+            disabled={!account || gpu.source !== "contract" || gpu.status !== "available" || gpu.provider.toLowerCase() === account.toLowerCase() || !isContractConfigured()}
             isRenting={rentingGpuId === gpu.id}
             onHoursChange={(gpuId, hours) =>
-              setHoursByGpu((current) => ({
-                ...current,
-                [gpuId]: Math.max(1, Math.min(24, hours)),
-              }))
+              setHoursByGpu((current) => ({ ...current, [gpuId]: Math.max(1, Math.min(24, hours)) }))
             }
             onRent={handleRent}
+            onDetails={setSelectedGpu}
           />
         ))}
       </div>
-
-      {!isConnected ? (
-        <StatusMessage type="info">
-          Connect MetaMask to read contract data and enable the Rent buttons.
-        </StatusMessage>
-      ) : null}
+      <GPUDetailModal gpu={selectedGpu} onClose={() => setSelectedGpu(null)} />
+      <RentConfirmationModal
+        gpu={pendingRentalGpu}
+        hours={pendingRentalGpu ? hoursByGpu[pendingRentalGpu.id] ?? 1 : 1}
+        status={rentStatus}
+        isConfirming={Boolean(rentingGpuId)}
+        onCancel={() => {
+          if (!rentingGpuId) {
+            setPendingRentalGpu(null);
+            setRentStatus("");
+          }
+        }}
+        onConfirm={confirmRent}
+      />
     </section>
   );
 }

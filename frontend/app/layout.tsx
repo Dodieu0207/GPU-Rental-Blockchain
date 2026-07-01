@@ -5,7 +5,7 @@ import { WalletProvider } from "@/components/WalletProvider";
 
 export const metadata: Metadata = {
   title: "DeCompute",
-  description: "GPU rental blockchain demo on Sepolia",
+  description: "Decentralized GPU rental marketplace",
 };
 
 export default function RootLayout({

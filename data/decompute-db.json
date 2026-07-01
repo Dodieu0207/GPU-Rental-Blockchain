@@ -1,0 +1,67 @@
+{
+  "users": [],
+  "gpus": [
+    {
+      "id": "demo-gpu-rtx-3060",
+      "providerId": "0xeb5db0bc882b30cf8f0489eb5af4e39dea5522e1",
+      "providerWalletAddress": "0xeb5db0bc882b30cf8f0489eb5af4e39dea5522e1",
+      "machineId": "demo-machine-rtx-3060",
+      "metadataCID": "mock-b30c73cf3dede441eae61edb1bec9a0f9b1ac4a117286a",
+      "cid": "mock-b30c73cf3dede441eae61edb1bec9a0f9b1ac4a117286a",
+      "metadata": {
+        "providerId": "",
+        "machineId": "demo-machine-rtx-3060",
+        "gpuName": "NVIDIA GeForce RTX 3060",
+        "gpuCount": 1,
+        "vramGB": 12,
+        "driverVersion": "mock-driver",
+        "cudaVersion": "mock-cuda",
+        "status": "available",
+        "agent": {
+          "hostname": "demo-host",
+          "platform": "win32",
+          "arch": "x64",
+          "dockerMode": "real"
+        },
+        "gpus": [
+          {
+            "index": 0,
+            "gpuName": "NVIDIA GeForce RTX 3060",
+            "vramGB": 12,
+            "driverVersion": "mock-driver"
+          }
+        ]
+      },
+      "spec": "ipfs://mock-b30c73cf3dede441eae61edb1bec9a0f9b1ac4a117286a",
+      "specHash": "mock-b30c73cf3dede441eae61edb1bec9a0f9b1ac4a117286a",
+      "pricePerHourWei": "10000000000000000",
+      "pricePerHour": "10000000000000000",
+      "agentUrl": "http://127.0.0.1:7000",
+      "status": "available",
+      "availability": "available",
+      "available": true,
+      "isAvailable": true,
+      "rented": false,
+      "isRented": false,
+      "state": "available",
+      "createdAt": "2026-07-01T00:00:00.000Z",
+      "updatedAt": "2026-07-01T00:00:00.000Z",
+      "contract": {
+        "status": "demo_seed",
+        "functionName": "registerGPUWithCID",
+        "note": "Demo seed data only. New registrations should be created from Host Agent scan."
+      }
+    }
+  ],
+  "rentals": [],
+  "providerAgents": [
+    {
+      "providerWalletAddress": "0xeb5db0bc882b30cf8f0489eb5af4e39dea5522e1",
+      "agentUrl": "http://127.0.0.1:7000",
+      "createdAt": "2026-07-01T00:00:00.000Z",
+      "updatedAt": "2026-07-01T00:00:00.000Z"
+    }
+  ],
+  "agentReports": [],
+  "transactions": []
+}

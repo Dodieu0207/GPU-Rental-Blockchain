@@ -1,102 +1,70 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { StatusMessage } from "@/components/StatusMessage";
+import { ConnectWalletButton } from "@/components/wallet/ConnectWalletButton";
 import { useWallet } from "@/components/WalletProvider";
-import { WalletStatusPanel } from "@/components/wallet/WalletStatusPanel";
-import { getPlatformBalance, withdrawPlatformFees } from "@/lib/contract";
+import { shortenAddress } from "@/lib/format";
 
 export default function SettingsPage() {
-  const { account, connectWallet, getProvider, isSepolia, role } = useWallet();
-  const [platformBalance, setPlatformBalance] = useState("0");
-  const [isWithdrawing, setIsWithdrawing] = useState(false);
-  const [message, setMessage] = useState<{
-    type: "info" | "success" | "error" | "warning";
-    text: string;
-  } | null>(null);
-
-  const loadPlatformBalance = useCallback(async () => {
-    const provider = getProvider();
-    if (!provider) return;
-    setPlatformBalance(await getPlatformBalance(provider));
-  }, [getProvider]);
-
-  useEffect(() => {
-    void loadPlatformBalance();
-  }, [loadPlatformBalance]);
-
-  const handleWithdrawPlatformFees = async () => {
-    setMessage(null);
-
-    if (!account) {
-      await connectWallet();
-      return;
-    }
-
-    if (role !== "admin") {
-      setMessage({ type: "warning", text: "Only platform owner/admin role can withdraw platform fees." });
-      return;
-    }
-
-    if (!isSepolia) {
-      setMessage({ type: "warning", text: "Please switch MetaMask to Sepolia before withdrawing." });
-      return;
-    }
-
-    const provider = getProvider();
-    if (!provider) {
-      setMessage({ type: "error", text: "MetaMask provider not found." });
-      return;
-    }
-
-    setIsWithdrawing(true);
-    try {
-      await withdrawPlatformFees(provider);
-      await loadPlatformBalance();
-      setMessage({ type: "success", text: "Platform fees withdrawn to owner wallet." });
-    } catch (error) {
-      setMessage({
-        type: "error",
-        text: error instanceof Error ? error.message : "Platform withdraw failed.",
-      });
-    } finally {
-      setIsWithdrawing(false);
-    }
-  };
+  const { account, chainId, role, disconnectWallet, clearCache } = useWallet();
 
   return (
-    <section className="space-y-6">
+    <section className="space-y-8">
       <div>
-        <p className="text-sm font-semibold uppercase tracking-wide text-brand">
-          Account Settings
-        </p>
-        <h1 className="mt-2 text-3xl font-bold text-ink">Profile and Security</h1>
+        <p className="text-sm font-semibold uppercase tracking-wide text-violet-300">Settings</p>
+        <h1 className="mt-2 text-4xl font-bold">Account Settings</h1>
       </div>
-      <WalletStatusPanel />
-      {message ? <StatusMessage type={message.type}>{message.text}</StatusMessage> : null}
-      <section className="rounded-lg border border-line bg-white p-5 shadow-soft">
-        <h2 className="text-lg font-bold text-ink">Platform Owner Fees</h2>
-        <p className="mt-2 text-sm text-gray-600">
-          Platform balance available in smart contract:{" "}
-          <span className="font-semibold text-ink">{platformBalance} ETH</span>
-        </p>
-        <div className="mt-4 flex flex-wrap gap-3">
+
+      <section className="rounded-lg bg-white p-6 text-ink shadow-soft">
+        <h2 className="text-xl font-bold">Wallet</h2>
+        <div className="mt-4 grid gap-3 text-sm text-gray-700 md:grid-cols-2">
+          <p>Address: <span className="font-semibold text-ink">{account ? shortenAddress(account) : "Not connected"}</span></p>
+          <p>Chain ID: <span className="font-semibold text-ink">{chainId ?? "Not connected"}</span></p>
+        </div>
+        <div className="mt-5 flex flex-wrap gap-3">
+          <ConnectWalletButton />
           <button
             type="button"
-            onClick={loadPlatformBalance}
-            className="rounded-md border border-line bg-white px-4 py-2 text-sm font-semibold text-ink hover:bg-gray-50"
+            onClick={disconnectWallet}
+            className="rounded-md border border-line px-4 py-2 text-sm font-semibold hover:bg-gray-50"
           >
-            Refresh Platform Balance
-          </button>
-          <button
-            type="button"
-            onClick={handleWithdrawPlatformFees}
-            disabled={role !== "admin" || isWithdrawing}
-            className="rounded-md bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
-          >
-            {isWithdrawing ? "Withdrawing..." : "Withdraw Platform Fees"}
+            Disconnect Wallet
           </button>
         </div>
+      </section>
+
+      <section className="rounded-lg bg-white p-6 text-ink shadow-soft">
+        <h2 className="text-xl font-bold">Role</h2>
+        <p className="mt-3 text-sm text-gray-700">
+          Registered role: <span className="font-semibold capitalize text-ink">{role}</span>
+        </p>
+        <p className="mt-2 text-sm text-gray-600">
+          Roles are fixed per wallet after signup. Use Clear Cache only for local demo reset; backend demo data remains in backend/data/users.json.
+        </p>
+      </section>
+
+      <section className="rounded-lg bg-white p-6 text-ink shadow-soft">
+        <h2 className="text-xl font-bold">Preferences</h2>
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          <label className="text-sm font-medium text-gray-700">
+            Language
+            <select className="mt-1 w-full rounded-md border border-line px-3 py-2" disabled>
+              <option>English placeholder</option>
+            </select>
+          </label>
+          <label className="text-sm font-medium text-gray-700">
+            Theme
+            <select className="mt-1 w-full rounded-md border border-line px-3 py-2" disabled>
+              <option>Dark placeholder</option>
+            </select>
+          </label>
+        </div>
+        <button
+          type="button"
+          onClick={clearCache}
+          className="mt-5 rounded-md border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-100"
+        >
+          Clear Cache
+        </button>
       </section>
     </section>
   );
